@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## R Markdown
 
-ARTPOP
+ARTPOP by Lady Gaga
 1.  Aura
 2.  Venus
 3.  G.U.Y.
