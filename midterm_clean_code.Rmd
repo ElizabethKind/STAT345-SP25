@@ -1,0 +1,105 @@
+---
+title: "Clean Code"
+author: "Elizabeth Kind"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load packages
+library(tidyverse)
+library(hoopR)
+library(grid)
+library(png)
+library(ggimage)
+```
+
+```{r}
+# Load play-by-play data from 2005 to 2024: in its own code block as it loads slow
+pbp_data <- load_nba_pbp(season = 2005:2024)
+```
+
+```{r, fig.width=20, fig.height=10}
+# Filter for team shot attempts
+team_shots_tidy <- pbp_data %>%
+  select(home_team_mascot, away_team_mascot, coordinate_x, coordinate_y, scoring_play, shooting_play, season) %>% # Select only relevant columns for graph
+  filter(home_team_mascot == "Bucks" | away_team_mascot == "Bucks",  # Filter team to only Bucks
+         !is.na(coordinate_x), !is.na(coordinate_y), # Ensure coordinates exist
+         -48 < coordinate_x & coordinate_x < 48, -50 < coordinate_y & coordinate_y < 50, # Creating limit so outliers that don't make sense don't appear on the plot
+         shooting_play == TRUE) %>% # Filtered so missed shots are from shooting plays only
+  mutate(made_shot = ifelse(scoring_play == TRUE, "Made", "Missed"), # Creating "Made" and "Missed" variables for the graph legend
+         shot_type = case_when( # Categorizing shots using Pythagorean theorem so the hypotnuse is x amount away creating a arc
+           sqrt(coordinate_x^2 + coordinate_y^2) <= -27 | sqrt(coordinate_x^2 + coordinate_y^2) >= 27 ~ "2PT", # 2-point range |27| to edge on both sides using court coordinates from data
+           sqrt(coordinate_x^2 + coordinate_y^2) > -27 & sqrt(coordinate_x^2 + coordinate_y^2) < -16 |
+           sqrt(coordinate_x^2 + coordinate_y^2) < 27 & sqrt(coordinate_x^2 + coordinate_y^2) > 16 ~ "3PT", # 3-point range |27| to |16| on both sides using court coordinates from data
+           sqrt(coordinate_x^2 + coordinate_y^2) <= 16 & sqrt(coordinate_x^2 + coordinate_y^2) >= -16 ~ "4PT")) # 4-point range from -16 to 16 using court coordinates from data
+   
+# Calculate shooting percentages by range
+shot_percentages <- team_shots_tidy %>%
+  group_by(shot_type) %>%
+  summarise(
+    attempts = n(), # Take infinite attempts
+    makes = sum(made_shot == "Made"), # Make sum of made shots into new variable 'makes'
+    shooting_percentage = makes / attempts) # Shooting percentage
+
+# Calculate the total points for the Bucks based on shot types
+total_points <- team_shots_tidy %>%
+  mutate(
+    points = case_when(
+      shot_type == "2PT" ~ 2 * (made_shot == "Made"), # 2-point shots are 2 points
+      shot_type == "3PT" ~ 3 * (made_shot == "Made"), # 3-point shots are 3 points
+      shot_type == "4PT" ~ 3 * (made_shot == "Made") # 4-point shots are still 3-points (for comparison later)
+    )
+  ) %>%
+  summarise(total_points = sum(points))
+
+# Simulate the potential points if all 3PT shots were 4PT
+simulated_points <- team_shots_tidy %>%
+  mutate(
+    simulated_points = case_when(
+      shot_type == "2PT" ~ 2 * (made_shot == "Made"), # 2-point shots are still 2 points
+      shot_type == "3PT" ~ 3 * (made_shot == "Made"), # 3-point shots are still 3 points
+      shot_type == "4PT" ~ 4 * (made_shot == "Made") # 4-point shots are now worth 4 points
+    )
+  ) %>%
+  summarise(simulated_total_points = sum(simulated_points))
+
+# Calculate the percentage increase in total points
+percentage_increase <- (simulated_points$simulated_total_points - total_points$total_points) / total_points$total_points * 100
+
+# Calculate the number of points increased
+points_increase <- (simulated_points$simulated_total_points - total_points$total_points) / 20 # Divide by 20 to get around a season's worth of extra points
+
+court_image <- readPNG("nba_court.png") # Load PNG of bball court
+court_grob <- rasterGrob(court_image, width = unit(1, "npc"), height = unit(1, "npc")) # Grob the image to load fast into the background of the graph
+
+# Create shot chart
+ggplot(team_shots_tidy, aes(x = coordinate_x, y = coordinate_y, color = made_shot)) +
+  annotation_custom(court_grob, xmin = -55, xmax = 55, ymin = -30, ymax = 30) + # Getting court image in the background of data points and scaling it appropriately
+  geom_point(alpha = 0.35, size = 1) +  # Adjust opacity & size
+  facet_wrap(~season) + # Facet by season to see the differences in seasons
+  scale_color_manual(values = c("Made" = "darkgreen", "Missed" = "tan"), # Bucks colors
+                     guide = guide_legend(override.aes = list(size = 5))) +  # Enlarges legend color
+  coord_fixed() +  # Keep court proportions
+  theme_minimal() + # Have minimal theme since without, the gray only behind labels is distracting
+  theme(
+    plot.title = element_text(size = 20, face = "bold"),  # Increase title size
+    axis.title.x = element_text(size = 20, face = "bold"),  # Increase X-axis label size
+    axis.title.y = element_text(size = 20, face = "bold"),  # Increase Y-axis label size
+    axis.text = element_text(size = 10),  # Increase tick mark label size
+    strip.text = element_text(size = 20),  # Increase facet label size
+    legend.title = element_text(size = 20, face = "bold"),  # Increase legend title size
+    legend.text = element_text(size = 18)  # Increase legend item text size
+  ) +
+  labs(title = "Shot Chart for Bucks", # Graph title
+       x = "Court X Coordinate", # X-axis title
+       y = "Court Y Coordinate", # Y-axis title
+       color = "Shot Type") # Set up legend by "Shot Type"
+
+# Print out the result of 4-point percent increase
+cat("If the 4-point shot were incorporated, the Bucks' total points for the season would increase by", 
+    round(percentage_increase, 2), "%. This is an increase of around", points_increase, "points per season.")
+```
